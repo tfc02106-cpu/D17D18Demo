@@ -151,9 +151,14 @@ for (let i = 0; i <= 28; i++) {
   const t = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.052, 0.055), M(0x121922));
   t.position.set(-2.7 + i * 0.2, SCALEY - 0.025, BEAMZ + 0.024); world.add(t);
 }
-for (let i = -2; i <= 2; i++) {
-  const sp = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.40, 0.14), M(0x22303f, { roughness: .8 }));
-  sp.position.set(i * 1.2, SCALEY - 0.25, BEAMZ); world.add(sp);
+// 尺座:自花崗岩面立起之連續支撐座,待校尺置於其上
+const GRANITE_TOP = -0.21, PAD_H = 0.03;
+const scaleBottom = SCALEY - 0.05, benchTop = scaleBottom - PAD_H;
+const bench = new THREE.Mesh(new THREE.BoxGeometry(RAILLEN - 0.3, benchTop - GRANITE_TOP, 0.20), M(0x22303f, { roughness: .8 }));
+bench.position.set(0, (GRANITE_TOP + benchTop) / 2, BEAMZ); world.add(bench);
+for (let i = -2; i <= 2; i++) {   // 支撐墊
+  const pad = new THREE.Mesh(new THREE.BoxGeometry(0.16, PAD_H, 0.16), M(0x3d5470, { roughness: .6 }));
+  pad.position.set(i * 1.2, benchTop + PAD_H / 2, BEAMZ); world.add(pad);
 }
 
 /* ---------- 單一移動平台(旋轉主體) ---------- */
@@ -217,9 +222,13 @@ function glow(a, on) {
 /* 雷射與光束 */
 const laser17 = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.24, 0.24), M(0x402220, { emissive: 0x330a08 }));
 laser17.position.set(-3.3, BEAMY, BEAMZ); world.add(laser17);
-const beam = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]),
-  new THREE.LineBasicMaterial({ color: 0xFF4A3D }));
-world.add(beam);
+const mkBeam = c => { const l = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]), new THREE.LineBasicMaterial({ color: c })); world.add(l); return l; };
+const beam = mkBeam(0xFF4A3D);
+// D18 雷射(右)與標準/輔助雙光束,對齊上層平台之 HCC
+const HCCY = 0.18 + 0.495;
+const laser18 = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.28, 0.28), M(0x1d3a30, { emissive: 0x082018 }));
+laser18.position.set(3.3, HCCY, 0); world.add(laser18);
+const b18a = mkBeam(0x37C79A), b18b = mkBeam(0x37C79A);
 const dimMat = new THREE.LineBasicMaterial({ color: 0xF2B33D });
 const abbeGrp = new THREE.Group(); world.add(abbeGrp);
 abbeGrp.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-1.5, BEAMY, BEAMZ), new THREE.Vector3(-1.5, SCALEY, BEAMZ)]), dimMat));
@@ -237,6 +246,7 @@ addTag("後向反射鏡", retro, "cl");
 addTag("待校刻線尺", scaleBar, "cd");
 addTag("d_z = 85 mm", abbeAnchor, "cd");
 addTag("D17 雷射", laser17, "cl");
+addTag("D18 雷射", laser18, "");
 
 /* ---------- 控制 ---------- */
 const S = { p: true, y: false, r: false, move: true, beam: true, ghost: false };
@@ -322,10 +332,13 @@ function animate(t) {
   glow(axPitch, S.p); glow(axYaw, S.y); glow(axRoll, S.r);
   ghost.visible = S.ghost;
 
-  beam.visible = S.beam;
+  beam.visible = b18a.visible = b18b.visible = S.beam;
   if (S.beam) {
     retro.getWorldPosition(tmp);
     beam.geometry.setFromPoints([laser17.position.clone().add(new THREE.Vector3(0.18, 0, 0)), tmp.clone().add(new THREE.Vector3(-0.085, 0, 0))]);
+    hcc.getWorldPosition(tmp);
+    b18a.geometry.setFromPoints([laser18.position.clone().add(new THREE.Vector3(-0.18, 0.035, 0.04)), tmp.clone().add(new THREE.Vector3(0.09, 0.035, 0.04))]);
+    b18b.geometry.setFromPoints([laser18.position.clone().add(new THREE.Vector3(-0.18, -0.035, -0.04)), tmp.clone().add(new THREE.Vector3(0.09, -0.035, -0.04))]);
   }
 
   const k = REAL / AMP, bR = beta * k, gR = gamma * k, aR = alpha * k;
