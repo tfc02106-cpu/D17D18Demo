@@ -128,84 +128,237 @@ const world = new THREE.Group(); scene.add(world);
 const RAILZ = [-0.275, 0.275], BEAMZ = 0.375, BEAMY = 0.20, ABBE = 0.085;
 const SCALEY = BEAMY - ABBE, HALFD = 0.30, RAILLEN = 6.0;
 
-/* 基座、滑軌(取 6 m 區段以放大細節) */
-const gr = new THREE.Mesh(new THREE.BoxGeometry(RAILLEN + 0.6, 0.5, 2.0), M(0x1a2330, { roughness: .85, metalness: .05 }));
-gr.position.set(0, -0.46, 0.1); world.add(gr);
-RAILZ.forEach(zz => {
-  const rail = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, RAILLEN, 24), M(0x8fa1b3, { metalness: .75, roughness: .28 }));
-  rail.rotation.z = Math.PI / 2; rail.position.set(0, -0.12, zz); world.add(rail);
-  for (let k = -5; k <= 5; k++) {
-    const r = new THREE.Mesh(new THREE.CylinderGeometry(0.072, 0.072, 0.03, 20), M(0x5c6e80, { metalness: .6, roughness: .4 }));
-    r.rotation.z = Math.PI / 2; r.position.set(k * 0.55, -0.12, zz); world.add(r);
+/* ---------- 程序式貼圖(依實機照片:花崗岩斑點、檯面孔位陣列、刻線尺) ---------- */
+function tex(w, h, draw) {
+  try {
+    const cv = document.createElement("canvas"); cv.width = w; cv.height = h;
+    const c = cv.getContext("2d"); if (!c) return null;
+    draw(c, w, h);
+    const t = new THREE.CanvasTexture(cv); t.anisotropy = 4; return t;
+  } catch (e) { return null; }
+}
+function speckle(c, w, h) {
+  c.fillStyle = "#22262a"; c.fillRect(0, 0, w, h);
+  for (let i = 0; i < 24000; i++) {
+    const g = 24 + Math.random() * 92;
+    c.fillStyle = "rgba(" + g + "," + (g + 4) + "," + (g + 9) + "," + (0.25 + Math.random() * 0.5) + ")";
+    c.fillRect(Math.random() * w, Math.random() * h, 1 + Math.random() * 2.2, 1 + Math.random() * 2.2);
   }
-  for (let i = -3; i <= 3; i++) {
-    const p = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.16, 0.12), M(0x22303f, { roughness: .8 }));
-    p.position.set(i * 1.0, -0.28, zz); world.add(p);
+  for (let i = 0; i < 320; i++) {
+    c.fillStyle = "rgba(214,222,230," + (0.12 + Math.random() * 0.32) + ")";
+    c.beginPath(); c.arc(Math.random() * w, Math.random() * h, 0.6 + Math.random() * 1.7, 0, 7); c.fill();
+  }
+}
+const texGranite = tex(512, 512, speckle);
+const texGraniteTop = tex(900, 260, (c, w, h) => {          // 檯面:斑點 + 安裝孔陣列
+  speckle(c, w, h);
+  for (let i = 0; i < 34; i++) for (let j = 0; j < 4; j++) {
+    const x = (i + 0.5) * w / 34, y = (j + 0.5) * h / 4;
+    c.fillStyle = "#0c0f12"; c.beginPath(); c.arc(x, y, 5.5, 0, 7); c.fill();
+    c.strokeStyle = "rgba(210,220,230,.16)"; c.lineWidth = 1.2; c.stroke();
+  }
+});
+const texScale = tex(1400, 64, (c, w, h) => {                 // 刻線尺:細刻線 + 每 10 格長刻線
+  const g = c.createLinearGradient(0, 0, 0, h);
+  g.addColorStop(0, "#e2e8ee"); g.addColorStop(0.5, "#c6ced6"); g.addColorStop(1, "#aab3bc");
+  c.fillStyle = g; c.fillRect(0, 0, w, h);
+  c.fillStyle = "#15181c";
+  for (let i = 0; i <= 240; i++) {
+    const x = i * w / 240, lng = (i % 10 === 0);
+    c.fillRect(x, lng ? h * 0.12 : h * 0.34, lng ? 2.6 : 1.6, lng ? h * 0.55 : h * 0.30);
+  }
+});
+if (texGranite) { texGranite.wrapS = texGranite.wrapT = THREE.RepeatWrapping; texGranite.repeat.set(3, 1); }
+
+const matGranite = texGranite ? new THREE.MeshStandardMaterial({ map: texGranite, roughness: .82, metalness: .06 })
+                              : M(0x22262a, { roughness: .82, metalness: .06 });
+const matGraniteTop = texGraniteTop ? new THREE.MeshStandardMaterial({ map: texGraniteTop, roughness: .74, metalness: .08 })
+                                    : matGranite;
+const matAlBlack = M(0x1b1f24, { roughness: .42, metalness: .55 });   // 黑色陽極鋁
+const matAlSilver = M(0x9aa5b1, { roughness: .35, metalness: .75 });
+const matSteel = M(0xc2ccd6, { roughness: .18, metalness: .92 });     // 拋光圓桿
+const matRed = M(0xa8261c, { roughness: .38, metalness: .5 });        // 紅色陽極雷射頭
+const matPCB = M(0x1d5c33, { roughness: .7, metalness: .1 });
+const matBolt = M(0x6e7883, { roughness: .35, metalness: .85 });
+
+/* ---------- 花崗岩基座(含檯面孔位) ---------- */
+const GRA_TOP = -0.205, GRA_H = 0.55;
+const granite = new THREE.Mesh(new THREE.BoxGeometry(6.8, GRA_H, 2.0),
+  [matGranite, matGranite, matGraniteTop, matGranite, matGranite, matGranite]);
+granite.position.set(0, GRA_TOP - GRA_H / 2, 0.1); world.add(granite);
+const plinth = new THREE.Mesh(new THREE.BoxGeometry(6.5, 0.28, 1.7), M(0x171b1f, { roughness: .9 }));
+plinth.position.set(0, GRA_TOP - GRA_H - 0.14, 0.1); world.add(plinth);
+for (let i = -2; i <= 2; i += 2) {                     // 支腳
+  const leg = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.5, 0.5), M(0x14181c, { roughness: .9 }));
+  leg.position.set(i * 1.5, GRA_TOP - GRA_H - 0.53, 0.1); world.add(leg);
+}
+
+/* ---------- 圓桿滑軌 + 鞍座(照片中每段以黑色鞍座固定) ---------- */
+const RAIL_Y = -0.09, RAIL_R = 0.045;
+let jointAnchor = null;
+RAILZ.forEach(zz => {
+  const rail = new THREE.Mesh(new THREE.CylinderGeometry(RAIL_R, RAIL_R, 6.6, 28), matSteel);
+  rail.rotation.z = Math.PI / 2; rail.position.set(0, RAIL_Y, zz); world.add(rail);
+  for (let k = -5; k <= 5; k++) {                    // 鞍座,間距 0.55 m(對應段接位置)
+    const sd = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.15, 0.20), matAlBlack);
+    sd.position.set(k * 0.55, RAIL_Y - 0.075, zz); world.add(sd);
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.05, 0.22), matAlBlack);
+    cap.position.set(k * 0.55, RAIL_Y + 0.05, zz); world.add(cap);
+    [-0.07, 0.07].forEach(o => {
+      const bolt = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.03, 8), matBolt);
+      bolt.position.set(k * 0.55, RAIL_Y + 0.075, zz + o); world.add(bolt);
+    });
+    if (zz > 0 && k === 2) jointAnchor = sd;
   }
 });
 
-/* 待校刻線尺:光束正下方 */
-const scaleBar = new THREE.Mesh(new THREE.BoxGeometry(RAILLEN - 0.4, 0.05, 0.10), M(0xd8dee6, { metalness: .12, roughness: .32 }));
-scaleBar.position.set(0, SCALEY - 0.025, BEAMZ); world.add(scaleBar);
-for (let i = 0; i <= 28; i++) {
-  const t = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.052, 0.055), M(0x121922));
-  t.position.set(-2.7 + i * 0.2, SCALEY - 0.025, BEAMZ + 0.024); world.add(t);
-}
-// 尺座:自花崗岩面立起之連續支撐座,待校尺置於其上
-const GRANITE_TOP = -0.21, PAD_H = 0.03;
-const scaleBottom = SCALEY - 0.05, benchTop = scaleBottom - PAD_H;
-const bench = new THREE.Mesh(new THREE.BoxGeometry(RAILLEN - 0.3, benchTop - GRANITE_TOP, 0.20), M(0x22303f, { roughness: .8 }));
-bench.position.set(0, (GRANITE_TOP + benchTop) / 2, BEAMZ); world.add(bench);
-for (let i = -2; i <= 2; i++) {   // 支撐墊
-  const pad = new THREE.Mesh(new THREE.BoxGeometry(0.16, PAD_H, 0.16), M(0x3d5470, { roughness: .6 }));
-  pad.position.set(i * 1.2, benchTop + PAD_H / 2, BEAMZ); world.add(pad);
+/* ---------- 尺組結構:花崗岩基座 → 連續尺座 → 支撐墊 → 待校刻線尺 ---------- */
+/* 四層由下而上依序堆疊,各層以不同材質區分,層間無空隙 */
+const matBench = M(0x515c68, { roughness: .5, metalness: .6 });   // 連續尺座(鋼製長樑)
+const matPad   = M(0xd2dae3, { roughness: .25, metalness: .85 }); // 支撐墊(研磨面)
+
+const PAD_H = 0.045;                       // 支撐墊高度
+const SCALE_H = 0.05;                      // 尺厚
+const scaleTopY    = SCALEY;               // 尺面(量測面)= 0.115
+const scaleBottomY = scaleTopY - SCALE_H;  // 尺底 = 0.065
+const padTopY      = scaleBottomY;         // 墊頂 = 尺底
+const padBottomY   = padTopY - PAD_H;      // 墊底 = 0.020
+const benchTopY    = padBottomY;           // 尺座頂 = 墊底
+const benchBottomY = GRA_TOP;              // 尺座底 = 花崗岩頂 = -0.205
+
+// 第二層:連續尺座(自岩面立起的長樑,含頂面加工面與固定螺栓)
+const bench = new THREE.Mesh(new THREE.BoxGeometry(6.0, benchTopY - benchBottomY, 0.24), matBench);
+bench.position.set(0, (benchBottomY + benchTopY) / 2, BEAMZ); world.add(bench);
+const benchCap = new THREE.Mesh(new THREE.BoxGeometry(6.1, 0.022, 0.28), matAlSilver);
+benchCap.position.set(0, benchTopY - 0.011, BEAMZ); world.add(benchCap);
+for (let i = -2; i <= 2; i++) {            // 尺座與花崗岩之固定螺栓
+  [-0.09, 0.09].forEach(o => {
+    const bolt = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 0.022, 10), matBolt);
+    bolt.position.set(i * 1.1, GRA_TOP + 0.012, BEAMZ + o); world.add(bolt);
+  });
+  const rib = new THREE.Mesh(new THREE.BoxGeometry(0.05, benchTopY - benchBottomY - 0.03, 0.30), matBench);
+  rib.position.set(i * 1.1, (benchBottomY + benchTopY) / 2, BEAMZ); world.add(rib);
 }
 
-/* ---------- 單一移動平台(旋轉主體) ---------- */
+// 第三層:支撐墊(離散,尺僅於此處與尺座接觸)
+for (let i = -2; i <= 2; i++) {
+  const pad = new THREE.Mesh(new THREE.BoxGeometry(0.18, PAD_H, 0.18), matPad);
+  pad.position.set(i * 1.1, padBottomY + PAD_H / 2, BEAMZ); world.add(pad);
+  [-0.085, 0.085].forEach(o => {           // 側向壓夾(照片中的黑色夾塊)
+    const clamp = new THREE.Mesh(new THREE.BoxGeometry(0.08, PAD_H + SCALE_H, 0.045), matAlBlack);
+    clamp.position.set(i * 1.1, padBottomY + (PAD_H + SCALE_H) / 2, BEAMZ + o); world.add(clamp);
+  });
+}
+
+// 第四層:待校刻線尺(上表面為刻線量測面,位於 D17 光束正下方)
+const matScale = texScale ? new THREE.MeshStandardMaterial({ map: texScale, roughness: .3, metalness: .55 })
+                          : M(0xcfd6dd, { roughness: .3, metalness: .55 });
+const scaleBar = new THREE.Mesh(new THREE.BoxGeometry(5.6, SCALE_H, 0.10),
+  [matAlSilver, matAlSilver, matScale, matAlSilver, matAlSilver, matAlSilver]);
+scaleBar.position.set(0, (scaleBottomY + scaleTopY) / 2, BEAMZ); world.add(scaleBar);
+
+/* ---------- 單一移動平台(依照片:堆疊式黑色陽極板 + 直立顯微鏡 + 紅色雷射頭) ---------- */
 const stage = new THREE.Group(); world.add(stage);
 stage.position.set(0, 0.18, 0);
 stage.rotation.order = "ZXY";
-const bodyMat = M(0x2b4a6e, { metalness: .35, roughness: .5 });
-stage.add(new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.32, HALFD * 2), bodyMat));
-const deck = new THREE.Mesh(new THREE.BoxGeometry(0.86, 0.16, 0.52), M(0x3d6494));
-deck.position.set(0.0, 0.24, 0.0); stage.add(deck);   // 上一階平台,頂面 local y = 0.32
-const deckPost = new THREE.Mesh(new THREE.BoxGeometry(0.70, 0.10, 0.40), M(0x24405c));
-deckPost.position.set(0.0, 0.13, 0.0); stage.add(deckPost);
-[[-0.44, -0.275], [0.44, -0.275], [-0.44, 0.275], [0.44, 0.275]].forEach(([wx, wz]) => {
-  const w = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.06, 20), M(0x121922, { roughness: .6 }));
-  w.rotation.z = Math.PI / 2; w.position.set(wx, -0.24, wz); stage.add(w);
+stage.rotation.order = "ZXY";
+// 底板與線性軸承塊
+stage.add(new THREE.Mesh(new THREE.BoxGeometry(1.08, 0.05, 0.70), matAlBlack));
+[[-0.36, -0.275], [0.36, -0.275], [-0.36, 0.275], [0.36, 0.275]].forEach(([bx, bz]) => {
+  const brg = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.16, 0.17), matAlBlack);
+  brg.position.set(bx, -0.10, bz); stage.add(brg);
+  const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.062, 0.062, 0.21, 18), matAlSilver);
+  collar.rotation.z = Math.PI / 2; collar.position.set(bx, -0.135, bz); stage.add(collar);
 });
+// 立柱與上一階平台
+[-0.30, 0.30].forEach(rx => {
+  const riser = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.22, 0.46), matAlBlack);
+  riser.position.set(rx, 0.10, 0); stage.add(riser);
+});
+const deck = new THREE.Mesh(new THREE.BoxGeometry(0.86, 0.16, 0.52), matAlBlack);
+deck.position.set(0.0, 0.24, 0.0); stage.add(deck);
+const deckPlate = new THREE.Mesh(new THREE.BoxGeometry(0.88, 0.012, 0.54), matAlSilver);
+deckPlate.position.set(0.0, 0.325, 0.0); stage.add(deckPlate);
+// D17 光路:外伸臂 + 後向反射鏡
 const armY = BEAMY - stage.position.y, armLen = (BEAMZ + 0.10) - HALFD;
-const arm = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.09, armLen), M(0x35597f, { metalness: .4 }));
+const arm = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.09, armLen), matAlBlack);
 arm.position.set(-0.42, armY, HALFD + armLen / 2); stage.add(arm);
-const armPost = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.30, 0.14), M(0x35597f, { metalness: .4 }));
+const armPost = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.30, 0.14), matAlBlack);
 armPost.position.set(-0.42, armY - 0.19, HALFD - 0.02); stage.add(armPost);
-const retroBase = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.20, 0.20), M(0x14202c));
+const retroBase = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.19, 0.19), matAlBlack);
 retroBase.position.set(-0.42, armY, BEAMZ); stage.add(retroBase);
-const retro = new THREE.Mesh(new THREE.ConeGeometry(0.085, 0.17, 4), M(0xffd9d4, { metalness: .75, roughness: .18, emissive: 0x6b1a16 }));
-retro.rotation.z = Math.PI / 2; retro.position.set(-0.56, armY, BEAMZ); stage.add(retro);
-const ring = new THREE.Mesh(new THREE.TorusGeometry(0.10, 0.008, 8, 24), M(0xFF4A3D, { emissive: 0x551512 }));
+const retro = new THREE.Mesh(new THREE.ConeGeometry(0.075, 0.15, 4), M(0xe8eef5, { metalness: .92, roughness: .1 }));
+retro.rotation.z = Math.PI / 2; retro.position.set(-0.545, armY, BEAMZ); stage.add(retro);
+const ring = new THREE.Mesh(new THREE.TorusGeometry(0.088, 0.009, 8, 24), M(0xFF4A3D, { emissive: 0x551512 }));
 ring.rotation.y = Math.PI / 2; ring.position.set(-0.50, armY, BEAMZ); stage.add(ring);
-const shelfLen = (BEAMZ + 0.06) - HALFD;
-const shelf = new THREE.Mesh(new THREE.BoxGeometry(0.30, 0.07, shelfLen), M(0x35597f, { metalness: .4 }));
-shelf.position.set(0.24, 0.30, HALFD + shelfLen / 2); stage.add(shelf);
+// 直立顯微鏡鏡筒(照片:多節黑色鏡筒,下端物鏡對準刻線尺,上端相機)
+const shelfLen = (BEAMZ + 0.07) - HALFD;
+const shelf = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.06, shelfLen), matAlBlack);
+shelf.position.set(0.26, 0.30, HALFD + shelfLen / 2); stage.add(shelf);
 const scopeY = SCALEY - stage.position.y;
-const scope = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.085, 0.26, 20), M(0x9fb4c8, { metalness: .6, roughness: .3 }));
-scope.position.set(0.24, scopeY + 0.20, BEAMZ); stage.add(scope);
-const ccd = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.15, 0.18), M(0x1b2836));
-ccd.position.set(0.24, scopeY + 0.42, BEAMZ); stage.add(ccd);
-const level = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.11, 0.18), M(0x18222e));
-level.position.set(-0.28, 0.375, -0.02); stage.add(level);
-const hccMount = new THREE.Mesh(new THREE.BoxGeometry(0.20, 0.08, 0.20), M(0x24405c));
+[[0.058, 0.30, 0.16], [0.048, 0.20, 0.02], [0.040, 0.10, -0.10]].forEach(([r, len, cy]) => {
+  const seg = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 22), matAlBlack);
+  seg.position.set(0.26, cy, BEAMZ); stage.add(seg);
+});
+[0.24, 0.10, -0.02].forEach(cy => {
+  const knurl = new THREE.Mesh(new THREE.CylinderGeometry(0.064, 0.064, 0.026, 22), matAlSilver);
+  knurl.position.set(0.26, cy, BEAMZ); stage.add(knurl);
+});
+const objective = new THREE.Mesh(new THREE.CylinderGeometry(0.034, 0.028, 0.06, 20), matAlSilver);
+objective.position.set(0.26, scopeY + 0.09, BEAMZ); stage.add(objective);
+const ccd = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.14, 0.16), matAlBlack);
+ccd.position.set(0.26, 0.47, BEAMZ); stage.add(ccd);
+const ccdCap = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.07, 18), matAlSilver);
+ccdCap.position.set(0.26, 0.565, BEAMZ); stage.add(ccdCap);
+// 紅色陽極雷射/光學模組 + 小顯示器(照片右側紅色塊)
+const redBlk = new THREE.Mesh(new THREE.BoxGeometry(0.30, 0.30, 0.20), matRed);
+redBlk.position.set(-0.12, 0.47, 0.10); stage.add(redBlk);
+const disp = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.09, 0.012), M(0x7fd4e8, { emissive: 0x123840, roughness: .4 }));
+disp.position.set(-0.12, 0.50, 0.205); stage.add(disp);
+// 步進馬達 + 綠色電路板
+const motor = new THREE.Mesh(new THREE.CylinderGeometry(0.062, 0.062, 0.16, 18), matAlBlack);
+motor.rotation.z = Math.PI / 2; motor.position.set(0.44, 0.40, -0.12); stage.add(motor);
+const motorBlk = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.11, 0.11), matAlBlack);
+motorBlk.position.set(0.34, 0.40, -0.12); stage.add(motorBlk);
+const pcb = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.015, 0.18), matPCB);
+pcb.position.set(-0.30, 0.34, -0.14); stage.add(pcb);
+// 電子水平儀
+const level = new THREE.Mesh(new THREE.BoxGeometry(0.20, 0.10, 0.16), matAlBlack);
+level.position.set(-0.30, 0.385, 0.12); stage.add(level);
+// D18 HCC:上一階平台之上,兩軌中線
+const hccMount = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.08, 0.19), matAlBlack);
 hccMount.position.set(0.28, 0.36, 0); stage.add(hccMount);
-const hcc = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.19, 0.19), M(0xd4ffe9, { metalness: .75, roughness: .12, emissive: 0x0d2a20 }));
-hcc.position.set(0.28, 0.495, 0); stage.add(hcc);   // 立於上一階平台之上
+const hcc = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.19, 0.19), M(0xdff5ea, { metalness: .8, roughness: .12, emissive: 0x0d2a20 }));
+hcc.position.set(0.28, 0.495, 0); stage.add(hcc);
+const hccRim = new THREE.Mesh(new THREE.TorusGeometry(0.072, 0.008, 8, 22), matAlSilver);
+hccRim.rotation.y = Math.PI / 2; hccRim.position.set(0.365, 0.495, 0); stage.add(hccRim);
+
+/* ---------- 兩端光學:D17 雷射(左)、D18 大口徑物鏡(右) ---------- */
+function opticPost(x, y, z, h) {
+  const post = new THREE.Mesh(new THREE.BoxGeometry(0.16, h, 0.16), matAlBlack);
+  post.position.set(x, y - h / 2, z); world.add(post);
+  const foot = new THREE.Mesh(new THREE.BoxGeometry(0.30, 0.03, 0.30), matAlSilver);
+  foot.position.set(x, GRA_TOP + 0.015, z); world.add(foot);
+}
+const laser17 = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.20, 0.20), matRed);
+laser17.position.set(-3.3, BEAMY, BEAMZ); world.add(laser17);
+const l17Head = new THREE.Mesh(new THREE.CylinderGeometry(0.048, 0.048, 0.10, 18), matAlBlack);
+l17Head.rotation.z = Math.PI / 2; l17Head.position.set(-3.06, BEAMY, BEAMZ); world.add(l17Head);
+opticPost(-3.3, BEAMY - 0.11, BEAMZ, BEAMY - 0.11 - GRA_TOP);
+
+const laser18 = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 0.34, 26), matAlBlack);
+laser18.rotation.z = Math.PI / 2; laser18.position.set(3.3, 0.675, 0); world.add(laser18);
+const l18Lens = new THREE.Mesh(new THREE.CylinderGeometry(0.128, 0.128, 0.03, 26), M(0x2b3f4d, { metalness: .8, roughness: .12 }));
+l18Lens.rotation.z = Math.PI / 2; l18Lens.position.set(3.12, 0.675, 0); world.add(l18Lens);
+const l18Body = new THREE.Mesh(new THREE.BoxGeometry(0.30, 0.26, 0.26), matAlBlack);
+l18Body.position.set(3.58, 0.675, 0); world.add(l18Body);
+opticPost(3.4, 0.675 - 0.16, 0, 0.675 - 0.16 - GRA_TOP);
 
 /* 標稱位置參考框(不轉動,對照用) */
 const ghost = new THREE.LineSegments(
-  new THREE.EdgesGeometry(new THREE.BoxGeometry(1.02, 0.34, HALFD * 2 + 0.02)),
+  new THREE.EdgesGeometry(new THREE.BoxGeometry(1.10, 0.62, 0.72)),
   new THREE.LineBasicMaterial({ color: 0x5C6E80 }));
-ghost.position.copy(stage.position); world.add(ghost);
+ghost.position.set(0, stage.position.y + 0.16, 0); world.add(ghost);
 
 /* 轉動軸箭頭(附著平台) */
 function arrow(dir, color, len) {
@@ -219,15 +372,9 @@ function glow(a, on) {
   [a.line.material, a.cone.material].forEach(m => { m.transparent = true; m.opacity = on ? 1 : 0.25; });
 }
 
-/* 雷射與光束 */
-const laser17 = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.24, 0.24), M(0x402220, { emissive: 0x330a08 }));
-laser17.position.set(-3.3, BEAMY, BEAMZ); world.add(laser17);
+/* 光束(雷射本體已於場景段建立) */
 const mkBeam = c => { const l = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]), new THREE.LineBasicMaterial({ color: c })); world.add(l); return l; };
 const beam = mkBeam(0xFF4A3D);
-// D18 雷射(右)與標準/輔助雙光束,對齊上層平台之 HCC
-const HCCY = 0.18 + 0.495;
-const laser18 = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.28, 0.28), M(0x1d3a30, { emissive: 0x082018 }));
-laser18.position.set(3.3, HCCY, 0); world.add(laser18);
 const b18a = mkBeam(0x37C79A), b18b = mkBeam(0x37C79A);
 const dimMat = new THREE.LineBasicMaterial({ color: 0xF2B33D });
 const abbeGrp = new THREE.Group(); world.add(abbeGrp);
