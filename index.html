@@ -104,6 +104,50 @@ button.on .dot{opacity:1}
     </div>
     <div style="font-size:10.5px;color:var(--tx3);margin-top:4px">3 m 為單點異常(σ 大一個量級);其餘位置 σ &lt; 1″,主體平穩無漂移。δX = β·d_z(d_z = 85 mm)。<b style="color:var(--tx2)">Yaw/Roll 目前無實測資料,以 sin 波示意其運動形態。</b></div>
   </div>
+  <div class="hud" id="rangeCard" style="display:none;top:96px;left:14px;padding:14px 18px;width:392px">
+    <div style="font-size:13px;color:var(--tx2);letter-spacing:.12em;margin-bottom:9px">即時測距|Eq. (5) 差動反推</div>
+    <div style="font-family:var(--mono);font-size:13px;line-height:1.8;color:var(--tx3)">
+      <div style="display:flex;justify-content:space-between">
+        <span>D17 讀值 <b id="q17" style="color:var(--tx2)">0.000</b> m</span>
+        <span>D18 讀值 <b id="q18" style="color:var(--tx2)">0.000</b> m</span>
+      </div>
+      <div style="display:flex;justify-content:space-between">
+        <span>δ₁₇ <b id="qa17" style="color:#FF6B60">+0.0</b> µm</span>
+        <span>δ₁₈ <b id="qa18" style="color:#37C79A">+0.0</b> µm</span>
+      </div>
+    </div>
+    <div style="font-family:var(--mono);margin-top:9px;padding-top:9px;border-top:1px solid var(--line)">
+      <div style="color:var(--tx2);font-size:11.5px;letter-spacing:.06em;margin-bottom:3px">① 差值殘差(扣除位置項,只剩姿態效應)</div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;font-size:14px">
+        <span style="color:var(--tx3)">Δδ = (X₁₇−X₁₈) − (2x−L)</span>
+        <span><b id="qDD" style="color:#A98FD6;font-size:20px">+0.0</b> <span style="color:var(--tx3);font-size:12px">µm</span></span>
+      </div>
+    </div>
+    <div style="font-family:var(--mono);margin-top:9px;padding-top:9px;border-top:1px solid var(--line)">
+      <div style="color:var(--yaw);font-size:11.5px;letter-spacing:.06em;margin-bottom:5px">② 反推 Pitch|β̂ = −Δδ/Δz(基線 Δz = 475 mm)</div>
+      <div style="display:flex;justify-content:space-between;font-size:15px">
+        <span style="color:var(--tx3)">反推 β̂</span>
+        <span><b id="qBH" style="color:#F2B33D;font-size:21px">+0.0</b> <span style="color:var(--tx3);font-size:12px">µrad</span></span>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:15px">
+        <span style="color:var(--tx3)">實測 β(表 3)</span>
+        <span><b id="qBT" style="color:#4D9BE8;font-size:21px">+0.0</b> <span style="color:var(--tx3);font-size:12px">µrad</span></span>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--tx3)">
+        <span>偏差(Yaw 混入 0.79γ)</span>
+        <span><b id="qMix" style="color:var(--tx2)">+0.0</b> µrad</span>
+      </div>
+    </div>
+    <div id="qBar" style="margin-top:9px;height:8px;background:rgba(255,255,255,.06);border-radius:4px;overflow:hidden">
+      <div id="qBarFill" style="height:100%;width:0%;background:#F2B33D"></div>
+    </div>
+    <div style="font-size:11.5px;color:var(--tx3);margin-top:8px;line-height:1.6">
+      D17/D18 光路垂直分離 475 mm,構成 Eq.(5a) 的兩點差動對——差值殘差可反推 Pitch,雜訊放大僅 2.1×。反推與實測的偏差即未量測 Yaw 之混入(0.375/0.475 = 0.79 倍),故仍需 AC 獨立通道分離 γ。
+    </div>
+  </div>
+  </div>
+  </div>
+
   <div class="hud" id="hint">左鍵 = 旋轉|右鍵/Shift = 平移|滾輪 = 縮放</div>
 </div>
 
@@ -414,6 +458,7 @@ function setDataMode(on) {
   S.data = on;
   document.getElementById("bDATA").classList.toggle("on", on);
   document.getElementById("dataCard").style.display = on ? "block" : "none";
+  document.getElementById("rangeCard").style.display = on ? "block" : "none";
   if (on) { S.p = true; document.getElementById("bP").classList.add("on"); }
 }
 document.getElementById("bDATA").addEventListener("click", () => setDataMode(!S.data));
@@ -544,10 +589,42 @@ const rB = document.getElementById("rB"), rG = document.getElementById("rG"),
 const fmt = (v, d) => (v >= 0 ? "+" : "") + v.toFixed(d);
 const tmp = new THREE.Vector3(), proj = new THREE.Vector3();
 
+/* ---------- Eq. (5) 前向模型:X_j = t_j + β·z_j − γ·y_j ---------- */
+/* 光路偏置(m):D17 = Rail B 外側 100 mm、高 200 mm;D18 = 兩軌中線、上層平台 675 mm */
+const OPT = { y17: 0.375, z17: 0.200, y18: 0.000, z18: 0.675 };
+const RAIL_L = 10.0;   // 有效量測全長(m)
+/* Yaw 目前無實測 → 合成場(含 0.55 m 接頭節距成分),與離線模擬一致 */
+function gammaField_urad(x) {
+  return 25 * Math.sin(2 * Math.PI * x / 3.3) + 8 * Math.sin(2 * Math.PI * x / 0.55);
+}
+function betaField_urad(x) {   // 表 3 實測相對健康基準之偏差
+  return (interp(x, REAL_POS, REAL_MEAN) - REAL_MEAN_HEALTHY) * Math.PI / 180 * 1e6;
+}
+function rangeReadings(x) {
+  const b = betaField_urad(x) * 1e-6, g = gammaField_urad(x) * 1e-6;   // rad
+  // 平移項:D17 由左端量 → t17 = x;D18 由右端對頂量 → t18 = L − x(符號相反)
+  const t17 = x, t18 = RAIL_L - x;
+  const abbe17 = b * OPT.z17 - g * OPT.y17;   // m(µm 級阿貝偏差)
+  const abbe18 = b * OPT.z18 - g * OPT.y18;
+  const X17 = t17 + abbe17;
+  const X18 = t18 + abbe18;
+  return {
+    X17: X17, X18: X18,
+    sum: X17 + X18,           // 應恆等於 L(對頂約束)
+    diff: X17 - X18,          // = 2x − L
+    abbe17_um: abbe17 * 1e6,  // 分離出的阿貝偏差(µm)
+    abbe18_um: abbe18 * 1e6
+  };
+}
+const q17 = document.getElementById("q17"), q18 = document.getElementById("q18"), qBarFill = document.getElementById("qBarFill");
+
 function animate(t) {
   const s = t / 1000;
   // 平台位置對映到 0–10 m 的實測範圍
-  const platX_m = 5 + (S.move ? 4.8 * Math.sin(s * 0.22) : 0);   // 0.2 → 9.8 m
+  // 等速往返:單趟 0→10 m 為 20 秒(三角波,速度固定 0.5 m/s)
+const SWEEP = 30;                                   // 單趟秒數
+const tri = (function(){ const u = (s % (2*SWEEP)) / SWEEP; return u <= 1 ? u : 2 - u; })();  // 0→1→0(30 秒單趟)
+const platX_m = S.move ? tri * 10 : 5;
 
   let beta, gamma, alpha;
   if (S.data) {
@@ -566,7 +643,10 @@ function animate(t) {
     alpha = S.r ? AMP * Math.sin(s * 1.5 + 4.2) : 0;
   }
   stage.rotation.x = alpha; stage.rotation.y = gamma; stage.rotation.z = -beta;
-  if (S.move) { stage.position.x = 4.5 * Math.sin(s * 0.18); ghost.position.x = stage.position.x; }
+  if (S.move) {
+    const u = (s % (2*30)) / 30; const tw = u <= 1 ? u : 2 - u;   // 30 秒等速往返
+    stage.position.x = (tw - 0.5) * 9.6; ghost.position.x = stage.position.x;
+  }
   if (S.data) {
     stage.position.x = platX_m - 5;   // 0–10 m 映射為 -5 → +5 m,滑座真的走完 10 米
     ghost.position.x = stage.position.x;
@@ -578,6 +658,33 @@ function animate(t) {
     if (mX) mX.textContent = platX_m.toFixed(2);
     if (mY) mY.textContent = yDeg.toFixed(4) + "°";
     if (mS) mS.textContent = (yStd * 3600).toFixed(2) + "″";
+    // Eq.(5) 即時測距 → 差值殘差 → 反推 Pitch
+    const q = rangeReadings(platX_m);
+    if (q17) q17.textContent = q.X17.toFixed(3);
+    if (q18) q18.textContent = q.X18.toFixed(3);
+    const qa17 = document.getElementById("qa17"), qa18 = document.getElementById("qa18");
+    if (qa17) qa17.textContent = fmt(q.abbe17_um, 1);
+    if (qa18) qa18.textContent = fmt(q.abbe18_um, 1);
+    // ① 差值殘差:以阿貝項直接相減(數值上等同 (X17−X18)−(2x−L),避免 m 級相消損失精度)
+    const resid_um = q.abbe17_um - q.abbe18_um;
+    // ② 反推 β̂ = −Δδ/Δz(µm / m = µrad),與表 3 實測對照
+    const DZ = OPT.z18 - OPT.z17;                 // 0.475 m
+    const betaHat = -resid_um / DZ;
+    const betaTrue = betaField_urad(platX_m);
+    const qDD = document.getElementById("qDD"), qBH = document.getElementById("qBH"),
+          qBT = document.getElementById("qBT"), qMix = document.getElementById("qMix");
+    if (qDD) qDD.textContent = fmt(resid_um, 1);
+    if (qBH) qBH.textContent = fmt(betaHat, 1);
+    if (qBT) qBT.textContent = fmt(betaTrue, 1);
+    if (qMix) qMix.textContent = fmt(betaHat - betaTrue, 1);
+    if (qBarFill) {
+      const mag = Math.min(Math.abs(betaHat) / 450, 1);       // 以 450 µrad 為滿刻度
+      qBarFill.style.width = (mag * 100).toFixed(1) + "%";
+      qBarFill.style.background = Math.abs(betaHat) > 100 ? "#FF4A3D" : "#F2B33D";
+    }
+    const alarm = Math.abs(betaHat) > 100;                    // 反推角逾 100 µrad 告警
+    if (qBH) qBH.style.color = alarm ? "#FF4A3D" : "#F2B33D";
+    if (qDD) qDD.style.color = alarm ? "#FF4A3D" : "#A98FD6";
   }
   glow(axPitch, S.p); glow(axYaw, S.y); glow(axRoll, S.r);
   ghost.visible = S.ghost;
